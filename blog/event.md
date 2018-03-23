@@ -177,7 +177,42 @@ export default EventEmitter;
 ```
 代码很少，只有151行，其实写的是简单版，且用的 `ES6`，所以才这么少；`Node.js`的事件和 `eventemitter3`可比这多且复杂不少，有兴趣可深入研究。
 
-它们都用到了 `_addListener` 方法：
+```javascript
+const toString = Object.prototype.toString;
+const isType = obj => toString.call(obj).slice(8, -1).toLowerCase();
+const isArray = obj => Array.isArray(obj) || isType(obj) === 'array';
+const isNullOrUndefined = obj => obj === null || obj === undefined;
+```
+
+这4行就是一些工具函数，判断所属类型、判断是否是 `null` 或者 `undefined`。
+
+```javascript
+constructor() {
+    if (isNullOrUndefined(this._events)) {
+      this._events = Object.create(null);
+    }
+  }
+```
+
+创建了一个 `EventEmitter` 类，然后在构造函数里初始化一个类的 `_events` 属性，这个属性不需要要继承任何东西，所以用了 `Object.create(null)`。当然这里 `isNullOrUndefined(this._events)` 还去判断了一下 `this._events` 是否为 `undefined` 或者 `null`，如果是才需要创建。但这里其实是没必要的，因为实例化一个 `EventEmitter` 都会调用这个构造函数，都是初始状态，`this._events` 应该是不可能已经定义了的，所以其实可以去掉。
+
+```javascript
+addListener(type, fn, context) {
+  return _addListener.call(this, type, fn, context);
+}
+
+on(type, fn, context) {
+  return this.addListener(type, fn, context);
+}
+
+once(type, fn, context) {
+  return _addListener.call(this, type, fn, context, true);
+}
+```
+
+接下来是三个方法 `addListener`、`on`、`once` ，其中 `on` 是 `addListener` 的别名，都是一样的。`once` 只执行一次就删除，另外两个可执行一次或多次。
+
+三个方法都用到了 `_addListener` 方法：
 ```javascript
 const _addListener = function(type, fn, context, once) {
   if (typeof fn !== 'function') {
