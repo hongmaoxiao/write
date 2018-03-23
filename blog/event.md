@@ -176,3 +176,100 @@ class EventEmitter {
 export default EventEmitter;
 ```
 代码很少，只有151行，其实写的是简单版，且用的 `ES6`，所以才这么少；`Node.js`的事件和 `eventemitter3`可比这多且复杂不少，有兴趣可深入研究。
+
+它们都用到了 `_addListener` 方法：
+```javascript
+const _addListener = function(type, fn, context, once) {
+  if (typeof fn !== 'function') {
+    throw new TypeError('fn must be a function');
+  }
+
+  fn.context = context;
+  fn.once = !!once;
+
+  const event = this._events[type];
+  // only one, let `this._events[type]` to be a function
+  if (isNullOrUndefined(event)) {
+    this._events[type] = fn;
+  } else if (typeof event === 'function') {
+    // already has one function, `this._events[type]` must be a function before
+    this._events[type] = [event, fn];
+  } else if (isArray(event)) {
+    // already has more than one function, just push
+    this._events[type].push(fn);
+  }
+
+  return this;
+};
+```
+方法有四个参数，`type` 是监听事件的名称，`fn` 是监听事件对应的方法，`context` 俗称`爸爸`，改变 `this` 指向用的，也就是执行的主体。`once` 是一个布尔型，用来标志方法是否只执行一次。
+首先判断 `fn` 的类型，如果不是方法，直接抛出一个类型错误。`fn.context = context;fn.once = !!once;` 把执行主体和是否执行一次作为方法的属性。`const event = this._events[type];` 把该对应 `type` 的所有已经监听的事件存到变量 `event`。
+```javascript
+// only one, let `this._events[type]` to be a function
+if (isNullOrUndefined(event)) {
+  this._events[type] = fn;
+} else if (typeof event === 'function') {
+  // already has one function, `this._events[type]` must be a function before
+  this._events[type] = [event, fn];
+} else if (isArray(event)) {
+  // already has more than one function, just push
+  this._events[type].push(fn);
+}
+
+return this;
+```
+如果 `type` 本身没有正在监听任何事件，直接把监听的方法 `fn` 赋给 `this._events[type] = fn;`；如果正在监听一个事件，则把要添加的 `fn` 和之前的方法变成一个2个元素的数组 `[event, fn]`，然后再赋给 `this._events[type]`，如果正在监听超过2个事件，直接`push`即可。最后返回 `this` ，也就 `EventEmitter` 实例本身。
+
+简单来讲不管是监听多少方法，都放到数组里是没必要像上面这样操作的。但性能较差，只有一个方法时是 `key: fn` 的效率比 `key: [fn]` 要高。
+
+再回头看看三个方法:
+```javascript
+addListener(type, fn, context) {
+  return _addListener.call(this, type, fn, context);
+}
+
+on(type, fn, context) {
+  return this.addListener(type, fn, context);
+}
+
+once(type, fn, context) {
+  return _addListener.call(this, type, fn, context, true);
+}
+```
+`addListener` 需要用 `call` 来改变 `this` 指向，指到了类的实例。`once` 则多传了一个标志位 `true` 来标志它只需要执行一次。这里你会看到我在 `addListener` 并没有传 `false` 作为标志位，主要是因为我懒，但是也不会影响到程序的逻辑。因为前面的 `fn.once = !!once` 已经能很好的处理不传值的情况。如果我没传任何值 `!!once` 为 `false`。
+
+接下来讲 `emit`
+```javascript
+emit(type, ...rest) {
+  if (isNullOrUndefined(type)) {
+    throw new Error('emit must receive at lease one argument');
+  }
+
+  const events = this._events[type];
+
+  if (isNullOrUndefined(events)) return false;
+
+  if (typeof events === 'function') {
+    events.call(events.context || null, rest);
+    if (events.once) {
+      this.removeListener(type, events);
+    }
+  } else if (isArray(events)) {
+    events.map(e => {
+      e.call(e.context || null, rest);
+      if (e.once) {
+        this.removeListener(type, e);
+      }
+    });
+  }
+
+  return true;
+}
+```
+事件触发需要指定具体的 `type` 否则直接抛出错误。这个意义很容易理解，你都没有指定名称，我怎么知道该去执行谁的事件。`if (isNullOrUndefined(events)) return false`，如果 `type` 对应的方法是 `undefined` 或者 `null` ，直接返回 `false` 了。因为压根没有对应 `type` 的方法可以执行。
+
+接着判断 `evnts` 是不是一个方法，如果是， `events.call(events.context || null, rest)` 执行该方法，如果指定了执行主体，用 `call` 改变 `this` 的指向指向该主体 `events.context` ，否则指向 `null` ，全局环境，浏览器环境下就是 `window`。差点忘了 `rest` ，`rest` 是方法执行时的其他参数变量。执行结束后判断 `events.once` ，如果为 `true` ，就用 `removeListener` 移除该监听事件。
+
+如果　`evnts` 是数组，和前边一样，只是需要遍历数组去执行所有的监听方法。
+
+执行结束后返回 `true`。
